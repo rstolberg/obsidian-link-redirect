@@ -1,6 +1,6 @@
 {
 	"id": "link-redirect",
-	"name": "Link Redirect",
+	"name": "Link Redirector",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Swaps all current note backlinks to your desired note",
