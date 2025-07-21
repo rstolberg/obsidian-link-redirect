@@ -192,7 +192,7 @@ class LinkRedirectSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Setting #1')
-			.setDesc('Plugin configuration')
+			.setDesc('Plugin')
 			.addText(text => text
 				.setPlaceholder('Enter configuration')
 				.setValue(this.plugin.settings.mySetting)
