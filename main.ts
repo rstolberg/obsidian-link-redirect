@@ -1,86 +1,171 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, FuzzyMatch, FuzzySuggestModal } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
+interface LinkRedirectSettings {
 	mySetting: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
+const DEFAULT_SETTINGS: LinkRedirectSettings = {
 	mySetting: 'default'
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+class NoteSuggestModal extends FuzzySuggestModal<TFile> {
+	private onChoose: (file: TFile) => void;
+
+	constructor(app: App, onChoose: (file: TFile) => void) {
+		super(app);
+		this.onChoose = onChoose;
+	}
+
+	getItems(): TFile[] {
+		return this.app.vault.getMarkdownFiles();
+	}
+
+	getItemText(file: TFile): string {
+		return file.basename;
+	}
+
+	onChooseItem(file: TFile, evt: MouseEvent | KeyboardEvent): void {
+		this.onChoose(file);
+	}
+}
+
+export default class LinkRedirectPlugin extends Plugin {
+	settings: LinkRedirectSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		// Main command for redirecting links
+		this.addCommand({
+			id: 'redirect-incoming-links',
+			name: 'Redirect incoming links to another note',
+			callback: () => {
+				this.redirectIncomingLinks();
+			}
 		});
-		// Perform additional things with the ribbon
+
+		// Ribbon icon
+		const ribbonIconEl = this.addRibbonIcon('git-graph', 'Link Redirect', (evt: MouseEvent) => {
+			this.redirectIncomingLinks();
+		});
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		// Settings tab
+		this.addSettingTab(new LinkRedirectSettingTab(this.app, this));
+	}
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+	async redirectIncomingLinks() {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!activeView) {
+			new Notice('No active note found');
+			return;
+		}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+		const currentFile = activeView.file;
+		if (!currentFile) {
+			new Notice('No file is currently open');
+			return;
+		}
+
+		// Find all files that link to the current note using resolvedLinks
+		const backlinks = this.findBacklinks(currentFile);
+		
+		if (backlinks.length === 0) {
+			new Notice('No incoming links found for this note');
+			return;
+		}
+
+		// Show modal to select target note
+		new NoteSuggestModal(this.app, async (targetFile: TFile) => {
+			if (targetFile.path === currentFile.path) {
+				new Notice('Cannot redirect to the same note');
+				return;
+			}
+
+			await this.performRedirect(currentFile, targetFile, backlinks);
+		}).open();
+	}
+
+	findBacklinks(targetFile: TFile): TFile[] {
+		const backlinks: TFile[] = [];
+		const resolvedLinks = this.app.metadataCache.resolvedLinks;
+		const targetPath = targetFile.path;
+
+		// Iterate through all files and their resolved links
+		for (const [sourcePath, links] of Object.entries(resolvedLinks)) {
+			// Check if this file links to our target file
+			if (links[targetPath] !== undefined) {
+				const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath) as TFile;
+				if (sourceFile) {
+					backlinks.push(sourceFile);
 				}
 			}
-		});
+		}
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		return backlinks;
 	}
 
-	onunload() {
+	async performRedirect(sourceFile: TFile, targetFile: TFile, backlinks: TFile[]) {
+		let updatedCount = 0;
+		const sourceBasename = sourceFile.basename;
+		const targetBasename = targetFile.basename;
 
+		// Iterate through all files that have backlinks to the source file
+		for (const file of backlinks) {
+			try {
+				let content = await this.app.vault.read(file);
+				let modified = false;
+
+				// Replace different types of links
+				// 1. Wikilinks [[Note Name]]
+				const wikilinkRegex = new RegExp(`\\[\\[${this.escapeRegex(sourceBasename)}\\]\\]`, 'g');
+				if (wikilinkRegex.test(content)) {
+					content = content.replace(wikilinkRegex, `[[${targetBasename}]]`);
+					modified = true;
+				}
+
+				// 2. Wikilinks with display text [[Note Name|Display Text]]
+				const wikilinkWithTextRegex = new RegExp(`\\[\\[${this.escapeRegex(sourceBasename)}\\|([^\\]]+)\\]\\]`, 'g');
+				if (wikilinkWithTextRegex.test(content)) {
+					content = content.replace(wikilinkWithTextRegex, `[[${targetBasename}|$1]]`);
+					modified = true;
+				}
+
+				// 3. Markdown links [Display Text](Note Name.md)
+				const markdownLinkRegex = new RegExp(`\\[([^\\]]+)\\]\\(${this.escapeRegex(sourceFile.name)}\\)`, 'g');
+				if (markdownLinkRegex.test(content)) {
+					content = content.replace(markdownLinkRegex, `[$1](${targetFile.name})`);
+					modified = true;
+				}
+
+				// 4. Simple markdown links [Display Text](Note Name)
+				const simpleMarkdownLinkRegex = new RegExp(`\\[([^\\]]+)\\]\\(${this.escapeRegex(sourceBasename)}\\)`, 'g');
+				if (simpleMarkdownLinkRegex.test(content)) {
+					content = content.replace(simpleMarkdownLinkRegex, `[$1](${targetBasename})`);
+					modified = true;
+				}
+
+				if (modified) {
+					await this.app.vault.modify(file, content);
+					updatedCount++;
+				}
+			} catch (error) {
+				console.error(`Error updating file ${file.path}:`, error);
+			}
+		}
+
+		if (updatedCount > 0) {
+			new Notice(`Successfully redirected links in ${updatedCount} file(s) from "${sourceBasename}" to "${targetBasename}"`);
+		} else {
+			new Notice('No links were found to redirect');
+		}
 	}
+
+	escapeRegex(string: string): string {
+		return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	onunload() {}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -91,40 +176,25 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+class LinkRedirectSettingTab extends PluginSettingTab {
+	plugin: LinkRedirectPlugin;
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: LinkRedirectPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
 	display(): void {
 		const {containerEl} = this;
-
 		containerEl.empty();
+
+		containerEl.createEl('h2', {text: 'Link Redirect Settings'});
 
 		new Setting(containerEl)
 			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setDesc('Plugin configuration')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
+				.setPlaceholder('Enter configuration')
 				.setValue(this.plugin.settings.mySetting)
 				.onChange(async (value) => {
 					this.plugin.settings.mySetting = value;
