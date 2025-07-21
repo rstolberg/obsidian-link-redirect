@@ -3,9 +3,8 @@
 	"name": "Link Redirect",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Swaps all incoming or outgoing links to your desired note",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Swaps all current note backlinks to your desired note",
+	"author": "rstolberg",
+	"authorUrl": "https://github.com/rstolberg",
 	"isDesktopOnly": false
 }
