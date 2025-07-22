@@ -185,20 +185,20 @@ class LinkRedirectSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const {containerEl} = this;
-		containerEl.empty();
+	// 	const {containerEl} = this;
+	// 	containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Link Redirect Settings'});
+	// 	containerEl.createEl('h2', {text: 'Link Redirect Settings'});
 
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('Plugin')
-			.addText(text => text
-				.setPlaceholder('Enter configuration')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+	// 	new Setting(containerEl)
+	// 		.setName('Setting #1')
+	// 		.setDesc('Plugin')
+	// 		.addText(text => text
+	// 			.setPlaceholder('Enter configuration')
+	// 			.setValue(this.plugin.settings.mySetting)
+	// 			.onChange(async (value) => {
+	// 				this.plugin.settings.mySetting = value;
+	// 				await this.plugin.saveSettings();
+	// 			}));
 	}
 }
